@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>數列偵探 Master - 均衡挑戰版</title>
+    <style>
+        :root {
+            --primary-color: #4a90e2;
+            --secondary-color: #f5a623;
+            --danger-color: #e74c3c;
+            --bg-color: #f0f4f8;
+            --card-bg: #ffffff;
+            --text-color: #333;
+            --tip-bg: #fff3cd;
+            --tip-border: #ffeeba;
+            --tip-text: #856404;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .game-container {
+            background-color: var(--card-bg);
+            border-radius: 15px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1);
+            width: 100%;
+            max-width: 700px;
+            padding: 30px;
+            text-align: center;
+            transition: all 0.3s ease;
+        }
+
+        h1 { color: var(--primary-color); margin-bottom: 10px; }
+        .subtitle { color: #666; margin-bottom: 30px; }
+
+        .btn {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            margin: 10px;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.1s, background-color 0.2s;
+            width: 80%;
+            max-width: 300px;
+        }
+
+        .btn:hover { background-color: #357abd; transform: translateY(-2px); }
+        .btn:active { transform: translateY(0); }
+
+        #options-area {
+            display: grid;
+            grid-template-columns: 1fr 1fr; 
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .btn-option {
+            background-color: white;
+            color: var(--text-color);
+            border: 2px solid var(--primary-color);
+            width: 100%; 
+            margin: 0;   
+            padding: 15px;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .btn-option:hover { background-color: #eef5ff; }
+        .btn-option:disabled { cursor: default; opacity: 0.7; }
+
+        .btn-hint {
+            background-color: var(--secondary-color);
+            font-size: 0.9em;
+            width: auto;
+            padding: 8px 16px;
+            margin-bottom: 15px;
+            border-radius: 20px;
+            border: none;
+            cursor: pointer;
+        }
+        .btn-hint:hover { filter: brightness(0.95); }
+
+        .hint-used-tag {
+            color: var(--danger-color);
+            font-weight: bold;
+            margin-left: 10px;
+            font-size: 0.9em;
+            display: none;
+        }
+
+        .hint-box {
+            background-color: var(--tip-bg);
+            border: 1px solid var(--tip-border);
+            color: var(--tip-text);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px auto;
+            text-align: left;
+            font-size: 0.95em;
+            line-height: 1.5;
+            display: none;
+            animation: fadeIn 0.5s;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(-5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .hidden { display: none; }
+
+        .question-box {
+            background-color: #fafafa;
+            border: 2px dashed #ccc;
+            padding: 25px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            font-size: 1.4em;
+            font-weight: bold;
+        }
+
+        .type-tag {
+            font-size: 0.5em;
+            background: #e1ecf4;
+            color: #39739d;
+            padding: 3px 8px;
+            border-radius: 10px;
+            vertical-align: middle;
+            margin-left: 10px;
+            white-space: nowrap;
+        }
+
+        .formula {
+            font-family: 'Courier New', Courier, monospace;
+            background: #eee;
+            padding: 2px 6px;
+            border-radius: 4px;
+            color: #d63384;
+        }
+
+        .score-board {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            font-size: 1.1rem;
+            color: #555;
+        }
+        
+        .score-value {
+            color: var(--primary-color);
+            font-weight: bold;
+            font-size: 1.4rem;
+        }
+
+        .feedback {
+            margin-top: 15px;
+            font-weight: bold;
+            min-height: 24px;
+            font-size: 1.1em;
+        }
+        .feedback.correct { color: green; }
+        .feedback.wrong { color: red; }
+        .feedback.points-info { color: #f39c12; font-size: 0.9em; margin-left: 10px; }
+
+        .progress-container {
+            width: 100%;
+            background-color: #ddd;
+            border-radius: 5px;
+            height: 8px;
+            margin-bottom: 20px;
+        }
+        .progress-bar {
+            height: 100%;
+            background-color: var(--primary-color);
+            border-radius: 5px;
+            width: 0%;
+            transition: width 0.3s;
+        }
+
+        @media (max-width: 500px) {
+            #options-area { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="game-container" id="menu-screen">
+        <h1>🔍 數列偵探 Master</h1>
+        <p class="subtitle">100% 題型覆蓋．均衡配題</p>
+        
+        <div>
+            <button class="btn" onclick="startGame('easy')">🟢 初級偵探 (找規律)</button>
+        </div>
+        <div>
+            <button class="btn" onclick="startGame('hard')">🔴 高級挑戰 (通項公式)</button>
+        </div>
+        <p style="margin-top:20px; font-size:0.8em; color:#999;">每題 10 分，使用提示扣 5 分</p>
+    </div>
+
+    <div class="game-container hidden" id="game-screen">
+        <div class="score-board">
+            <span>第 <span id="q-current">1</span>/10 題</span>
+            <span>得分: <span id="score" class="score-value">0</span></span>
+        </div>
+        <div class="progress-container">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+        
+        <div id="question-area"></div>
+        
+        <div>
+            <button class="btn btn-hint" id="hint-btn" onclick="toggleHint()">💡 顯示提示</button>
+            <span id="hint-tag" class="hint-used-tag">(-5分)</span>
+        </div>
+        <div class="hint-box" id="hint-content"></div>
+
+        <div id="options-area"></div>
+        <div class="feedback" id="feedback-msg"></div>
+    </div>
+
+    <div class="game-container hidden" id="result-screen">
+        <h1>遊戲結束!</h1>
+        <p class="subtitle">本次挑戰成績</p>
+        <h2 id="final-score" style="font-size: 3em; color: var(--primary-color); margin: 20px 0;">0</h2>
+        <p id="result-comment"></p>
+        <button class="btn" onclick="location.reload()">回到主選單</button>
+    </div>
+
+    <script>
+        // ---------------------------------------------
+        // 1. 題庫生成系統 (結構升級版)
+        // ---------------------------------------------
+        
+        // Easy 模式改為分類儲存，Hard 模式保持混合
+        const questionsDB = { 
+            easy_buckets: {
+                add: [],
+                sub: [],
+                mult: [],
+                sq: [],
+                tri: []
+            },
+            hard: [] 
+        };
+
+        function generateWrongOptions(correctAnswer, type) {
+            let wrongs = new Set();
+            let attempts = 0;
+            while(wrongs.size < 3 && attempts < 20) {
+                let offset;
+                if (type === 'small') offset = Math.floor(Math.random() * 5) + 1;
+                else if (type === 'mult') offset = Math.floor(Math.random() * 10) + 1;
+                else offset = Math.floor(Math.random() * 8) + 1;
+                
+                let wrongVal = Math.random() > 0.5 ? correctAnswer + offset : correctAnswer - offset;
+                if (wrongVal !== correctAnswer && wrongVal > 0) wrongs.add(wrongVal);
+                attempts++;
+            }
+            while(wrongs.size < 3) wrongs.add(correctAnswer + wrongs.size + 1);
+            return Array.from(wrongs);
+        }
+
+        function initDatabase() {
+            // 清空舊數據
+            questionsDB.easy_buckets = { add: [], sub: [], mult: [], sq: [], tri: [] };
+            questionsDB.hard = [];
+
+            // ================= EASY 生成 =================
+            // 1. 等差 (加法)
+            for (let i = 0; i < 40; i++) {
+                let start = Math.floor(Math.random() * 30) + 1;
+                let diff = Math.floor(Math.random() * 12) + 2; 
+                let seq = [start, start + diff, start + diff*2, start + diff*3];
+                let nextVal = start + diff * 4;
+                let wrongs = generateWrongOptions(nextVal, 'small');
+                
+                questionsDB.easy_buckets.add.push({
+                    q: `觀察數列：${seq.join(', ')}, ... <br>下一個數字是？ <span class="type-tag">加法</span>`,
+                    tip: `<b>找規律：</b><br>後項減前項 (${seq[1]} - ${seq[0]})，你會發現每項都加了 <b>${diff}</b>。`,
+                    options: [nextVal, ...wrongs], answer: nextVal
+                });
+            }
+
+            // 2. 減法
+            for (let i = 0; i < 30; i++) {
+                let start = Math.floor(Math.random() * 50) + 50; 
+                let diff = Math.floor(Math.random() * 8) + 2; 
+                let seq = [start, start - diff, start - diff*2, start - diff*3];
+                let nextVal = start - diff * 4;
+                let wrongs = generateWrongOptions(nextVal, 'small');
+                
+                questionsDB.easy_buckets.sub.push({
+                    q: `觀察數列：${seq.join(', ')}, ... <br>下一個數字是？ <span class="type-tag">減法</span>`,
+                    tip: `<b>數字變小：</b><br>每項都減少了 <b>${diff}</b>。<br>所以 ${seq[3]} - ${diff} = ?`,
+                    options: [nextVal, ...wrongs], answer: nextVal
+                });
+            }
+
+            // 3. 倍數
+            for (let i = 0; i < 30; i++) {
+                let start = Math.floor(Math.random() * 4) + 1; 
+                let ratio = Math.floor(Math.random() * 2) + 2; 
+                if (start > 2 && ratio > 2) start = 1;
+                let seq = [start, start * ratio, start * ratio*ratio, start * ratio*ratio*ratio];
+                let nextVal = seq[3] * ratio;
+                let wrongAdd = seq[3] + ratio; 
+                let otherWrongs = generateWrongOptions(nextVal, 'mult').slice(0, 2);
+                
+                questionsDB.easy_buckets.mult.push({
+                    q: `觀察數列：${seq.join(', ')}, ... <br>下一個數字是？ <span class="type-tag">倍數</span>`,
+                    tip: `<b>倍數爆炸：</b><br>數字增長很快！試試除法 (${seq[1]} ÷ ${seq[0]})。<br>規律是：每一項都乘以 <b>${ratio}</b>。`,
+                    options: [nextVal, wrongAdd, ...otherWrongs], answer: nextVal
+                });
+            }
+
+            // 4. 正方形
+            for (let i = 0; i < 20; i++) {
+                let nStart = Math.floor(Math.random() * 5) + 1;
+                let seq = [];
+                for(let k=0; k<4; k++) seq.push((nStart+k)**2);
+                let nextVal = (nStart+4)**2;
+                let wrongs = generateWrongOptions(nextVal, 'mult');
+                
+                questionsDB.easy_buckets.sq.push({
+                    q: `觀察數列：${seq.join(', ')}, ... <br>下一個數字是？ <span class="type-tag">正方形</span>`,
+                    tip: `<b>平方數：</b><br>這是 ${nStart}², ${nStart+1}², ${nStart+2}²...<br>下一個應該是 <b>${nStart+4}²</b>。`,
+                    options: [nextVal, ...wrongs], answer: nextVal
+                });
+            }
+
+            // 5. 三角形
+            for (let i = 0; i < 20; i++) {
+                let nStart = Math.floor(Math.random() * 3) + 1; 
+                let seq = [];
+                for(let k=0; k<4; k++) { let n = nStart + k; seq.push((n*(n+1))/2); }
+                let nextN = nStart + 4;
+                let nextVal = (nextN*(nextN+1))/2;
+                let wrong1 = seq[3] + (nextN - 1); 
+                let others = generateWrongOptions(nextVal, 'small').slice(0, 2);
+                
+                questionsDB.easy_buckets.tri.push({
+                    q: `觀察數列：${seq.join(', ')}, ... <br>下一個數字是？ <span class="type-tag">三角形</span>`,
+                    tip: `<b>間隔變大：</b><br>差值分別是 +${nStart+1}, +${nStart+2}, +${nStart+3}...<br>下一個應該要加 <b>${nStart+4}</b>。`,
+                    options: [nextVal, wrong1, ...others], answer: nextVal
+                });
+            }
+
+            // ================= HARD 生成 =================
+            // 求數值
+            for (let i = 0; i < 70; i++) {
+                let m = Math.floor(Math.random() * 8) + 2; 
+                let c = Math.floor(Math.random() * 19) - 9; 
+                let n = Math.floor(Math.random() * 20) + 5; 
+                let ans = m * n + c;
+                let wrong1 = m * n; let wrong2 = m * n - c; let wrong3 = ans + m;
+                let optsSet = new Set([ans, wrong1, wrong2, wrong3]);
+                while(optsSet.size < 4) optsSet.add(ans + Math.floor(Math.random()*5)+1);
+                let sign = c >= 0 ? "+" : "-";
+                
+                questionsDB.hard.push({
+                    q: `已知通項 <span class='formula'>an = ${m}n ${sign} ${Math.abs(c)}</span>。<br>求第 <b>${n}</b> 項的值。`,
+                    tip: `<b>代入 n：</b><br>將 n=${n} 代入公式：<br>${m} × ${n} ${sign} ${Math.abs(c)} = ?`,
+                    options: Array.from(optsSet), answer: ans
+                });
+            }
+            // 求項數 n
+            for (let i = 0; i < 50; i++) {
+                let m = Math.floor(Math.random() * 5) + 2; 
+                let c = Math.floor(Math.random() * 10) + 1; 
+                let n = Math.floor(Math.random() * 15) + 3; 
+                let val = m * n + c;
+                let wrong1 = n + 1; let wrong2 = n - 1; let wrong3 = n + 2;
+                
+                questionsDB.hard.push({
+                    q: `已知通項 <span class='formula'>an = ${m}n + ${c}</span>。<br>若某項的值為 <b>${val}</b>，求它是第幾項？`,
+                    tip: `<b>逆向解方程式：</b><br>${m}n + ${c} = ${val}<br>1. 減去常數：${val} - ${c} = ${val-c}<br>2. 除以係數：${val-c} ÷ ${m} = ?`,
+                    options: [`第 ${n} 項`, `第 ${wrong1} 項`, `第 ${wrong2} 項`, `第 ${wrong3} 項`],
+                    answer: `第 ${n} 項`
+                });
+            }
+        }
+
+        // ---------------------------------------------
+        // 2. 遊戲核心邏輯
+        // ---------------------------------------------
+
+        let currentQuestionsList = [];
+        let currentIndex = 0;
+        let score = 0;
+        let isHintUsed = false;
+
+        function shuffle(array) { return array.sort(() => Math.random() - 0.5); }
+
+        function startGame(mode) {
+            initDatabase();
+            score = 0;
+            currentIndex = 0;
+            currentQuestionsList = [];
+
+            if (mode === 'easy') {
+                // 強制平衡：每種類型各抽 2 題 = 10 題
+                const buckets = questionsDB.easy_buckets;
+                let qAdd = shuffle([...buckets.add]).slice(0, 2);
+                let qSub = shuffle([...buckets.sub]).slice(0, 2);
+                let qMult = shuffle([...buckets.mult]).slice(0, 2);
+                let qSq = shuffle([...buckets.sq]).slice(0, 2);
+                let qTri = shuffle([...buckets.tri]).slice(0, 2);
+                
+                // 合併後再打亂順序，避免題型連續出現
+                currentQuestionsList = shuffle([...qAdd, ...qSub, ...qMult, ...qSq, ...qTri]);
+            } else {
+                // Hard 模式維持隨機抽選
+                let pool = questionsDB.hard;
+                currentQuestionsList = shuffle([...pool]).slice(0, 10);
+            }
+
+            document.getElementById('menu-screen').classList.add('hidden');
+            document.getElementById('result-screen').classList.add('hidden');
+            document.getElementById('game-screen').classList.remove('hidden');
+            document.getElementById('score').innerText = 0;
+            
+            updateUI();
+            loadQuestion();
+        }
+
+        function loadQuestion() {
+            if (currentIndex >= currentQuestionsList.length) {
+                endGame();
+                return;
+            }
+
+            isHintUsed = false;
+            
+            const qData = currentQuestionsList[currentIndex];
+            const qArea = document.getElementById('question-area');
+            const optArea = document.getElementById('options-area');
+            const feedback = document.getElementById('feedback-msg');
+            const hintBtn = document.getElementById('hint-btn');
+            const hintContent = document.getElementById('hint-content');
+            const hintTag = document.getElementById('hint-tag');
+
+            feedback.innerText = "";
+            feedback.className = "feedback";
+            hintContent.style.display = 'none'; 
+            hintContent.innerHTML = qData.tip;  
+            hintBtn.innerText = "💡 顯示提示";
+            hintBtn.disabled = false;
+            hintTag.style.display = 'none'; 
+            
+            updateUI();
+
+            qArea.innerHTML = `<div class="question-box">${qData.q}</div>`;
+
+            let opts = shuffle([...qData.options]);
+            optArea.innerHTML = "";
+            opts.forEach(opt => {
+                const btn = document.createElement('button');
+                btn.className = "btn btn-option";
+                btn.innerText = opt;
+                btn.onclick = () => checkAnswer(opt, qData.answer, btn);
+                optArea.appendChild(btn);
+            });
+        }
+
+        function toggleHint() {
+            const content = document.getElementById('hint-content');
+            const btn = document.getElementById('hint-btn');
+            const hintTag = document.getElementById('hint-tag');
+            
+            if (content.style.display === 'none') {
+                content.style.display = 'block';
+                btn.innerText = "🙈 隱藏提示";
+                if (!isHintUsed) {
+                    isHintUsed = true;
+                    hintTag.style.display = 'inline';
+                }
+            } else {
+                content.style.display = 'none';
+                btn.innerText = "💡 顯示提示";
+            }
+        }
+
+        function checkAnswer(selected, correct, btnElement) {
+            const feedback = document.getElementById('feedback-msg');
+            const optArea = document.getElementById('options-area');
+            const allBtns = optArea.querySelectorAll('button');
+
+            allBtns.forEach(b => b.disabled = true);
+            document.getElementById('hint-btn').disabled = true; 
+
+            if (selected == correct) {
+                let pointsEarned = isHintUsed ? 5 : 10;
+                score += pointsEarned;
+                
+                let extraMsg = isHintUsed ? "(提示 -5)" : "";
+                feedback.innerHTML = `✅ 答對了！ <span class="points-info">+${pointsEarned} 分 ${extraMsg}</span>`;
+                feedback.classList.add('correct');
+                
+                btnElement.style.backgroundColor = "#d4edda";
+                btnElement.style.borderColor = "#28a745";
+            } else {
+                feedback.innerText = `❌ 答錯了。正確答案是 ${correct}`;
+                feedback.classList.add('wrong');
+                btnElement.style.backgroundColor = "#f8d7da";
+                btnElement.style.borderColor = "#dc3545";
+                
+                allBtns.forEach(b => {
+                    if (b.innerText == correct) {
+                        b.style.backgroundColor = "#d4edda";
+                        b.style.borderColor = "#28a745";
+                    }
+                });
+            }
+
+            document.getElementById('score').innerText = score;
+
+            setTimeout(() => {
+                currentIndex++;
+                loadQuestion();
+            }, 2000); 
+        }
+
+        function updateUI() {
+            document.getElementById('q-current').innerText = currentIndex + 1;
+            const progress = ((currentIndex) / 10) * 100;
+            document.getElementById('progress-bar').style.width = `${progress}%`;
+        }
+
+        function endGame() {
+            document.getElementById('game-screen').classList.add('hidden');
+            document.getElementById('result-screen').classList.remove('hidden');
+            
+            const finalScoreElement = document.getElementById('final-score');
+            const comment = document.getElementById('result-comment');
+            
+            finalScoreElement.innerText = score;
+
+            if (score === 100) {
+                comment.innerText = "🏆 完美！無懈可擊！";
+            } else if (score >= 80) {
+                comment.innerText = "🌟 超級優秀！";
+            } else if (score >= 50) {
+                comment.innerText = "👍 做得不錯，繼續保持！";
+            } else {
+                comment.innerText = "💪 沒關係，多練習幾次，少用提示會更高分喔！";
+            }
+        }
+    </script>
+</body>
+</html>
