@@ -1,0 +1,769 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Play, RotateCcw, Check, X, AlertTriangle, Brain, Users, BarChart3, ArrowRight, Settings, Info, Activity, Search } from 'lucide-react';
+
+/**
+ * BIAS BUSTERS: THE ROBOT RECRUITER
+ * A game about understanding data bias in ML models.
+ */
+
+// --- Constants & Config ---
+const COLORS = {
+  GROUP_A: '#F97316', // Orange
+  GROUP_B: '#A855F7', // Purple
+  BG: '#F3F4F6',
+};
+
+const TOOLS = {
+  VALID: 'drill',
+  INVALID: 'mop',
+};
+
+const GAME_PHASES = {
+  INTRO: 'INTRO',
+  COLLECT: 'COLLECT',
+  TRAIN: 'TRAIN',
+  DEPLOY: 'DEPLOY',
+  RESULTS: 'RESULTS',
+};
+
+// --- Helper Components ---
+
+// 1. The Robot Component
+const Robot = ({ color, tool, size = 'md', mood = 'neutral', dragging = false, className = '' }) => {
+  const sizeClasses = {
+    sm: 'w-12 h-16',
+    md: 'w-20 h-24',
+    lg: 'w-32 h-40',
+  };
+
+  const isDrill = tool === TOOLS.VALID;
+  
+  return (
+    <div className={`${sizeClasses[size]} relative flex flex-col items-center justify-end transition-transform duration-200 ${dragging ? 'scale-110 opacity-90' : ''} ${className}`}>
+      {/* Head */}
+      <div 
+        className="w-[60%] h-[30%] rounded-t-lg relative z-10 border-2 border-gray-800 transition-colors duration-300"
+        style={{ backgroundColor: color }}
+      >
+        {/* Eyes */}
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex gap-1">
+          <div className={`w-1.5 h-1.5 bg-white rounded-full ${mood === 'sad' ? 'animate-pulse' : ''}`}></div>
+          <div className={`w-1.5 h-1.5 bg-white rounded-full ${mood === 'sad' ? 'animate-pulse' : ''}`}></div>
+        </div>
+        {/* Antenna */}
+        <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-1 h-3 bg-gray-600"></div>
+        <div className={`absolute -top-4 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full ${mood === 'sad' ? 'bg-red-500' : 'bg-green-400'} animate-ping`}></div>
+      </div>
+      
+      {/* Body */}
+      <div 
+        className="w-full h-[50%] rounded-b-lg border-2 border-gray-800 flex items-center justify-center relative shadow-md transition-colors duration-300"
+        style={{ backgroundColor: color }}
+      >
+        {/* Tool Icon */}
+        <div className="bg-white/90 p-1 rounded shadow-sm">
+          {isDrill ? (
+             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-blue-600">
+               <path d="M14 9L10 9" />
+               <path d="M3 15h6" />
+               <path d="M11.5 6.5L14 4l4 4-2.5 2.5" />
+               <path d="M5 15l-2 6" />
+               <path d="M4 11l-2 6" />
+               <path d="M11 13l2 4" />
+             </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-red-600">
+              <rect x="2" y="14" width="20" height="8" rx="2" />
+              <line x1="12" y1="2" x2="12" y2="14" />
+              <line x1="8" y1="18" x2="16" y2="18" />
+            </svg>
+          )}
+        </div>
+      </div>
+
+      {/* Legs */}
+      <div className="flex gap-2 w-full justify-center -mt-1">
+        <div className="w-1.5 h-3 bg-gray-700 rounded-b"></div>
+        <div className="w-1.5 h-3 bg-gray-700 rounded-b"></div>
+      </div>
+    </div>
+  );
+};
+
+// --- Game Logic Engine ---
+
+export default function BiasBustersGame() {
+  const [phase, setPhase] = useState(GAME_PHASES.INTRO);
+  const [dataset, setDataset] = useState([]); 
+  const [queue, setQueue] = useState([]);
+  const [modelWeights, setModelWeights] = useState({ colorWeight: 0, toolWeight: 0 });
+  const [testResults, setTestResults] = useState([]);
+  const [stressTestResults, setStressTestResults] = useState([]);
+  const [score, setScore] = useState({ accuracy: 0, fairness: 0 });
+  const [feedback, setFeedback] = useState("");
+  const [draggedRobot, setDraggedRobot] = useState(null);
+
+  // Deployment Animation State
+  const [deploymentQueue, setDeploymentQueue] = useState([]);
+  const [currentCandidate, setCurrentCandidate] = useState(null);
+  const [scanResult, setScanResult] = useState(null); // { totalScore, colorScore, toolScore, decision }
+  const [deployStep, setDeployStep] = useState(0); // 0: Enter, 1: Scan, 2: Decision, 3: Exit
+
+  // Stats for the sidebar
+  const stats = useMemo(() => {
+    const total = dataset.length;
+    if (total === 0) return { orange: 0, purple: 0, drills: 0, mops: 0 };
+    return {
+      orange: dataset.filter(r => r.color === COLORS.GROUP_A).length,
+      purple: dataset.filter(r => r.color === COLORS.GROUP_B).length,
+      drills: dataset.filter(r => r.tool === TOOLS.VALID).length,
+      mops: dataset.filter(r => r.tool === TOOLS.INVALID).length,
+    };
+  }, [dataset]);
+
+  // --- Core Mechanics ---
+
+  const generateQueue = (count, biasLevel = 'high') => {
+    const newQueue = [];
+    for (let i = 0; i < count; i++) {
+      const tool = Math.random() > 0.5 ? TOOLS.VALID : TOOLS.INVALID;
+      let color;
+      if (biasLevel === 'high') {
+        // Extreme bias: 95% correlation
+        if (tool === TOOLS.VALID) {
+          color = Math.random() > 0.05 ? COLORS.GROUP_A : COLORS.GROUP_B;
+        } else {
+          color = Math.random() > 0.05 ? COLORS.GROUP_B : COLORS.GROUP_A;
+        }
+      } else {
+        color = Math.random() > 0.5 ? COLORS.GROUP_A : COLORS.GROUP_B;
+      }
+
+      newQueue.push({
+        id: Math.random().toString(36).substr(2, 9),
+        color,
+        tool,
+        trueLabel: tool === TOOLS.VALID ? 'HIRE' : 'REJECT'
+      });
+    }
+    setQueue(newQueue);
+  };
+
+  const handleStartRound = (augment = false) => {
+    if (augment) {
+      const newQueue = [];
+      for(let i=0; i<5; i++) {
+        newQueue.push({ id: Math.random(), color: COLORS.GROUP_B, tool: TOOLS.VALID, trueLabel: 'HIRE' });
+        newQueue.push({ id: Math.random(), color: COLORS.GROUP_A, tool: TOOLS.INVALID, trueLabel: 'REJECT' });
+      }
+      setQueue([...newQueue, ...queue]);
+      setFeedback("Boosting data stream with rare profiles...");
+    } else {
+      setDataset([]);
+      generateQueue(15, 'high');
+      setPhase(GAME_PHASES.COLLECT);
+      setFeedback("Drag robots to the correct buckets. HIRE Drills, REJECT Mops.");
+    }
+  };
+
+  const handleDrop = (bucket) => {
+    if (!draggedRobot) return;
+    setDataset(prev => [...prev, { ...draggedRobot, userLabel: bucket }]);
+    setQueue(prev => prev.filter(r => r.id !== draggedRobot.id));
+    setDraggedRobot(null);
+  };
+
+  const runTraining = () => {
+    if (dataset.length < 5) {
+      setFeedback("Need more data to train! Collect at least 5 robots.");
+      return;
+    }
+
+    setPhase(GAME_PHASES.TRAIN);
+    
+    setTimeout(() => {
+      // Calculate Weights based on dataset bias
+      const orangeRobots = dataset.filter(r => r.color === COLORS.GROUP_A);
+      const purpleRobots = dataset.filter(r => r.color === COLORS.GROUP_B);
+      
+      const orangeHireRate = orangeRobots.length ? orangeRobots.filter(r => r.userLabel === 'HIRE').length / orangeRobots.length : 0;
+      const purpleHireRate = purpleRobots.length ? purpleRobots.filter(r => r.userLabel === 'HIRE').length / purpleRobots.length : 0;
+      
+      const drills = dataset.filter(r => r.tool === TOOLS.VALID);
+      const mops = dataset.filter(r => r.tool === TOOLS.INVALID);
+      
+      const drillHireRate = drills.length ? drills.filter(r => r.userLabel === 'HIRE').length / drills.length : 0;
+      const mopHireRate = mops.length ? mops.filter(r => r.userLabel === 'HIRE').length / mops.length : 0;
+
+      const cWeight = Math.abs(orangeHireRate - purpleHireRate);
+      const tWeight = Math.abs(drillHireRate - mopHireRate);
+
+      const total = cWeight + tWeight;
+      const finalC = total === 0 ? 0 : cWeight / total;
+      const finalT = total === 0 ? 0 : tWeight / total;
+
+      const weights = { colorWeight: finalC, toolWeight: finalT };
+      setModelWeights(weights);
+      
+      // Start Deployment Simulation
+      setTimeout(() => startDeploymentPhase(weights), 2000);
+    }, 2000);
+  };
+
+  // --- Deployment Simulation Logic ---
+  
+  const startDeploymentPhase = (weights) => {
+    setPhase(GAME_PHASES.DEPLOY);
+    
+    // Create a balanced "Real World" queue for the live demo
+    const demoQueue = [
+      { id: 'd1', color: COLORS.GROUP_A, tool: TOOLS.VALID, expected: 'HIRE' }, // Orange Drill (Easy)
+      { id: 'd2', color: COLORS.GROUP_B, tool: TOOLS.INVALID, expected: 'REJECT' }, // Purple Mop (Easy)
+      { id: 'd3', color: COLORS.GROUP_A, tool: TOOLS.INVALID, expected: 'REJECT' }, // Orange Mop (Trick!)
+      { id: 'd4', color: COLORS.GROUP_B, tool: TOOLS.VALID, expected: 'HIRE' }, // Purple Drill (Trick!)
+      { id: 'd5', color: COLORS.GROUP_A, tool: TOOLS.VALID, expected: 'HIRE' },
+      { id: 'd6', color: COLORS.GROUP_B, tool: TOOLS.INVALID, expected: 'REJECT' },
+    ];
+    
+    setDeploymentQueue(demoQueue);
+    setTestResults([]);
+    processNextCandidate(demoQueue, 0, weights);
+  };
+
+  const processNextCandidate = (queue, index, weights) => {
+    if (index >= queue.length) {
+      setTimeout(() => calculateFinalResults(weights), 1000);
+      return;
+    }
+
+    const robot = queue[index];
+    setCurrentCandidate(robot);
+    setDeployStep(0); // Reset animation step
+    setScanResult(null);
+
+    // Animation Sequence
+    // 1. Enter (0ms)
+    setTimeout(() => {
+        setDeployStep(1); // Scanning
+        
+        // Calculate Score Live
+        let score = 0;
+        let cScore = 0;
+        let tScore = 0;
+
+        if (robot.color === COLORS.GROUP_A) cScore = weights.colorWeight; // Bias towards Orange
+        if (robot.tool === TOOLS.VALID) tScore = weights.toolWeight;
+
+        score = cScore + tScore;
+        const decision = score >= 0.55 ? 'HIRE' : 'REJECT';
+        const isCorrect = decision === robot.expected;
+
+        setScanResult({ total: score, cScore, tScore, decision, isCorrect });
+
+        // 2. Decision Result (1500ms)
+        setTimeout(() => {
+            setDeployStep(2);
+            
+            // Add to live results log
+            setTestResults(prev => [...prev, { ...robot, prediction: decision, correct: isCorrect }]);
+
+            // 3. Move next (3000ms)
+            setTimeout(() => {
+                processNextCandidate(queue, index + 1, weights);
+            }, 2000);
+        }, 1500);
+    }, 1000);
+  };
+
+  const calculateFinalResults = (weights) => {
+    // Generate the Stress Test Results (The "Another Dataset")
+    const stressTestSet = [
+        ...Array(6).fill(null).map((_, i) => ({ id: `s_pd_${i}`, color: COLORS.GROUP_B, tool: TOOLS.VALID, expected: 'HIRE' })), // Purple Drills
+        ...Array(6).fill(null).map((_, i) => ({ id: `s_om_${i}`, color: COLORS.GROUP_A, tool: TOOLS.INVALID, expected: 'REJECT' })), // Orange Mops
+    ];
+
+    const stressResults = stressTestSet.map(robot => {
+        let score = 0;
+        if (robot.color === COLORS.GROUP_A) score += weights.colorWeight;
+        if (robot.tool === TOOLS.VALID) score += weights.toolWeight;
+        const prediction = score >= 0.55 ? 'HIRE' : 'REJECT';
+        return { ...robot, correct: prediction === robot.expected, prediction };
+    });
+
+    setStressTestResults(stressResults);
+
+    // Calculate overall stats from the LIVE session + Stress test
+    // Live Accuracy
+    const liveCorrect = testResults.filter(r => r.correct).length + (testResults[testResults.length-1]?.correct ? 1 : 0); 
+
+    const finalLiveResults = [...testResults]; // Current visual log
+    const accuracy = Math.round((finalLiveResults.filter(r => r.correct).length / finalLiveResults.length) * 100) || 0;
+
+    // Fairness based on Stress Test (How many Minority cases did we get right?)
+    const stressCorrect = stressResults.filter(r => r.correct).length;
+    const fairness = Math.round((stressCorrect / stressResults.length) * 100);
+
+    setScore({ accuracy, fairness });
+    setPhase(GAME_PHASES.RESULTS);
+  };
+
+  // --- Render Helpers ---
+
+  const renderPhaseContent = () => {
+    switch(phase) {
+      case GAME_PHASES.INTRO:
+        return (
+          <div className="text-center max-w-2xl mx-auto p-8 bg-white rounded-xl shadow-lg animate-fade-in">
+            <div className="flex justify-center mb-6">
+              <Brain size={64} className="text-blue-500" />
+            </div>
+            <h1 className="text-4xl font-bold text-gray-800 mb-4">Bias Busters</h1>
+            <h2 className="text-xl text-gray-600 mb-6">The Robot Recruiter</h2>
+            <p className="text-lg text-gray-700 mb-8 leading-relaxed">
+              You are building an AI for a construction company. Your job is to train a model to <span className="font-bold text-green-600">HIRE robots with Drills</span> and <span className="font-bold text-red-600">REJECT robots with Mops</span>.
+              <br/><br/>
+              But be careful! The data coming in is biased. Can you build a fair model?
+            </p>
+            <button 
+              onClick={() => handleStartRound(false)}
+              className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-full text-xl shadow-lg transform transition hover:scale-105 flex items-center gap-2 mx-auto"
+            >
+              <Play size={24} /> Start Building Dataset
+            </button>
+          </div>
+        );
+
+      case GAME_PHASES.COLLECT:
+        return (
+          <div className="flex flex-col h-full">
+            {/* Top Bar */}
+            <div className="flex justify-between items-center mb-4 bg-white p-4 rounded-lg shadow-sm">
+              <div>
+                <h3 className="font-bold text-gray-700">Data Lab</h3>
+                <p className="text-sm text-gray-500">Drag robots to label them for training.</p>
+              </div>
+              <div className="text-right">
+                <div className="text-sm font-semibold">Dataset Size: {dataset.length}</div>
+                {dataset.length >= 5 && (
+                  <button 
+                    onClick={runTraining}
+                    className="ml-4 px-6 py-2 bg-green-500 hover:bg-green-600 text-white font-bold rounded shadow-md animate-bounce"
+                  >
+                    Train Model &rarr;
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Main Area */}
+            <div className="flex-1 flex gap-4">
+              {/* Queue */}
+              <div className="w-1/4 bg-gray-200 rounded-xl p-4 flex flex-col items-center gap-4 overflow-y-auto border-2 border-dashed border-gray-300">
+                <h4 className="font-bold text-gray-600 mb-2">Incoming Data</h4>
+                {queue.length === 0 ? (
+                  <div className="text-gray-400 text-center mt-10">Queue Empty</div>
+                ) : (
+                  queue.map((robot) => (
+                    <div 
+                      key={robot.id} 
+                      className="cursor-grab active:cursor-grabbing"
+                      draggable
+                      onDragStart={() => setDraggedRobot(robot)}
+                    >
+                      <Robot color={robot.color} tool={robot.tool} size="md" />
+                    </div>
+                  ))
+                )}
+                <button onClick={() => generateQueue(5, 'high')} className="mt-auto w-full py-2 text-sm text-blue-600 hover:bg-blue-50 rounded border border-blue-200">
+                  + Request More Data
+                </button>
+              </div>
+
+              {/* Buckets */}
+              <div className="flex-1 flex gap-4">
+                {/* Reject Bucket */}
+                <div 
+                  className="flex-1 bg-red-50 rounded-xl border-2 border-red-200 p-4 flex flex-col items-center"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => handleDrop('REJECT')}
+                >
+                  <div className="mb-4 flex items-center gap-2 text-red-600 font-bold text-xl">
+                    <X size={28} /> REJECT
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-center content-start w-full h-full overflow-y-auto">
+                    {dataset.filter(r => r.userLabel === 'REJECT').map(r => (
+                      <div key={r.id} className="scale-75"><Robot color={r.color} tool={r.tool} size="sm" /></div>
+                    ))}
+                  </div>
+                  <div className="text-xs text-red-400 mt-2">Target: Mops</div>
+                </div>
+
+                {/* Hire Bucket */}
+                <div 
+                  className="flex-1 bg-green-50 rounded-xl border-2 border-green-200 p-4 flex flex-col items-center"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={() => handleDrop('HIRE')}
+                >
+                  <div className="mb-4 flex items-center gap-2 text-green-600 font-bold text-xl">
+                    <Check size={28} /> HIRE
+                  </div>
+                  <div className="flex flex-wrap gap-2 justify-center content-start w-full h-full overflow-y-auto">
+                    {dataset.filter(r => r.userLabel === 'HIRE').map(r => (
+                      <div key={r.id} className="scale-75"><Robot color={r.color} tool={r.tool} size="sm" /></div>
+                    ))}
+                  </div>
+                  <div className="text-xs text-green-400 mt-2">Target: Drills</div>
+                </div>
+              </div>
+            </div>
+            
+             <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800 flex items-center gap-3">
+              <Info size={20} />
+              <span>
+                <strong>Tip:</strong> Look at your buckets. Are most HIRE robots Orange? Are most REJECT robots Purple? If so, your model might learn Color instead of Skill!
+              </span>
+            </div>
+          </div>
+        );
+
+      case GAME_PHASES.TRAIN:
+        return (
+          <div className="flex flex-col items-center justify-center h-full">
+            <h2 className="text-2xl font-bold mb-8">Training Neural Network...</h2>
+            <div className="relative w-64 h-64">
+              <div className="absolute inset-0 border-4 border-gray-200 rounded-full animate-spin border-t-blue-500"></div>
+              <div className="absolute inset-4 border-4 border-gray-200 rounded-full animate-spin border-t-green-500 animation-delay-200" style={{animationDirection: 'reverse'}}></div>
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Brain size={64} className="text-gray-400 animate-pulse" />
+              </div>
+            </div>
+            <div className="mt-8 space-y-2 text-center text-gray-600">
+              <p>Analyzing Color Patterns...</p>
+              <p>Analyzing Tool Shapes...</p>
+              <p>Calculating Weights...</p>
+            </div>
+          </div>
+        );
+
+      case GAME_PHASES.DEPLOY:
+        return (
+          <div className="flex flex-col h-full bg-gray-50 rounded-xl overflow-hidden relative border border-gray-200">
+             <div className="absolute top-4 left-4 z-10 bg-white/80 p-2 rounded shadow backdrop-blur-sm">
+                 <h3 className="font-bold flex items-center gap-2"><Activity className="text-green-500 animate-pulse"/> LIVE DEPLOYMENT</h3>
+                 <p className="text-xs text-gray-500">Processing real-world applicants...</p>
+             </div>
+
+             {/* Conveyor Belt Area */}
+             <div className="flex-1 flex items-center justify-center relative">
+                 {/* The Scanner */}
+                 <div className="absolute w-64 h-80 border-4 border-gray-800 rounded-xl flex flex-col items-center z-20 bg-white/10 backdrop-blur-sm shadow-2xl">
+                     <div className="w-full bg-gray-800 text-white text-center py-2 font-mono text-sm tracking-widest">AI_SCANNER_V1</div>
+                     
+                     {/* Scanner Beam */}
+                     {deployStep === 1 && (
+                         <div className="absolute top-10 left-0 w-full h-1 bg-red-500 shadow-[0_0_15px_rgba(239,68,68,1)] animate-scan"></div>
+                     )}
+
+                     {/* Stats Overlay */}
+                     {deployStep >= 1 && scanResult && (
+                         <div className="absolute -right-64 top-0 w-56 bg-white p-4 rounded-lg shadow-lg border border-gray-200 animate-fade-in-right">
+                             <h4 className="font-bold border-b pb-2 mb-2 text-gray-700">Analysis Logic</h4>
+                             <div className="flex justify-between text-sm mb-1">
+                                 <span>Color Score:</span>
+                                 <span className={scanResult.cScore > 0.3 ? 'text-orange-500 font-bold' : 'text-gray-400'}>
+                                     {(scanResult.cScore * 100).toFixed(0)} pts
+                                 </span>
+                             </div>
+                             <div className="flex justify-between text-sm mb-1">
+                                 <span>Tool Score:</span>
+                                 <span className={scanResult.tScore > 0.3 ? 'text-green-600 font-bold' : 'text-gray-400'}>
+                                     {(scanResult.tScore * 100).toFixed(0)} pts
+                                 </span>
+                             </div>
+                             <div className="mt-2 pt-2 border-t flex justify-between font-bold">
+                                 <span>Total:</span>
+                                 <span>{(scanResult.total * 100).toFixed(0)}</span>
+                             </div>
+                             {scanResult.decision === 'HIRE' ? 
+                                <div className="mt-2 text-center bg-green-100 text-green-800 py-1 rounded font-bold">DECISION: HIRE</div> :
+                                <div className="mt-2 text-center bg-red-100 text-red-800 py-1 rounded font-bold">DECISION: REJECT</div>
+                             }
+                             
+                             {deployStep === 2 && !scanResult.isCorrect && (
+                                 <div className="mt-2 text-xs text-center text-red-600 font-bold animate-pulse">
+                                     ⚠️ WRONG DECISION!
+                                 </div>
+                             )}
+                         </div>
+                     )}
+                 </div>
+
+                 {/* Robot on Belt */}
+                 {currentCandidate && (
+                     <div className="transition-all duration-500 z-10"
+                        style={{ 
+                            transform: deployStep === 0 ? 'translateX(-300px)' : deployStep === 3 ? 'translateX(300px)' : 'translateX(0)',
+                            opacity: deployStep === 3 ? 0 : 1
+                        }}
+                     >
+                         <Robot color={currentCandidate.color} tool={currentCandidate.tool} size="lg" mood={scanResult?.isCorrect === false ? 'sad' : 'neutral'} />
+                         
+                         {/* Stamp */}
+                         {deployStep === 2 && (
+                             <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 border-4 text-4xl font-black p-2 rounded transform -rotate-12 animate-stamp ${scanResult.decision === 'HIRE' ? 'border-green-600 text-green-600' : 'border-red-600 text-red-600'}`}>
+                                 {scanResult.decision}
+                             </div>
+                         )}
+                     </div>
+                 )}
+                 
+                 {/* Conveyor Belt Visual */}
+                 <div className="absolute bottom-10 w-full h-4 bg-gray-300 overflow-hidden">
+                     <div className="w-[200%] h-full bg-[linear-gradient(90deg,transparent_50%,rgba(0,0,0,0.1)_50%)] bg-[length:40px_100%] animate-conveyor"></div>
+                 </div>
+             </div>
+
+             {/* Live Log */}
+             <div className="h-32 bg-white border-t p-4 flex gap-3 overflow-x-auto items-center">
+                 <span className="text-xs font-bold text-gray-400 uppercase w-12 flex-shrink-0">History</span>
+                 {testResults.map((r, i) => (
+                    <div key={i} className={`flex-shrink-0 flex flex-col items-center p-1 rounded border-2 ${r.correct ? 'border-green-100 bg-green-50' : 'border-red-100 bg-red-50'}`}>
+                        <Robot color={r.color} tool={r.tool} size="sm" />
+                        <span className={`text-[10px] font-bold ${r.correct ? 'text-green-600' : 'text-red-600'}`}>{r.prediction}</span>
+                    </div>
+                 ))}
+             </div>
+          </div>
+        );
+
+      case GAME_PHASES.RESULTS:
+        const isFair = score.fairness > 70;
+        const isAccurate = score.accuracy > 70;
+        const passed = isFair && isAccurate;
+
+        return (
+          <div className="h-full overflow-y-auto p-4 pr-2">
+            <h2 className="text-3xl font-bold text-gray-800 mb-6 text-center">Simulation Report</h2>
+            
+            <div className="grid grid-cols-2 gap-6 mb-8">
+              {/* Score Cards */}
+              <div className={`p-6 rounded-xl border-l-8 shadow-sm bg-white ${isAccurate ? 'border-green-500' : 'border-orange-500'}`}>
+                <div className="text-gray-500 text-sm uppercase tracking-wide font-bold mb-1">General Accuracy</div>
+                <div className="text-4xl font-black">{score.accuracy}%</div>
+                <p className="text-sm text-gray-600 mt-2">
+                  Performance on typical data.
+                </p>
+              </div>
+
+              <div className={`p-6 rounded-xl border-l-8 shadow-sm bg-white ${isFair ? 'border-green-500' : 'border-red-600'}`}>
+                <div className="text-gray-500 text-sm uppercase tracking-wide font-bold mb-1">Fairness Score</div>
+                <div className="text-4xl font-black">{score.fairness}%</div>
+                <p className="text-sm text-gray-600 mt-2">
+                  {isFair ? "Good. Minority groups treated well." : "CRITICAL FAIL. Minority groups treated unfairly."}
+                </p>
+              </div>
+            </div>
+
+            {/* STRESS TEST VISUALIZATION */}
+            <div className="bg-white p-6 rounded-xl shadow-sm mb-8 border border-gray-200">
+                <div className="flex justify-between items-center mb-4 border-b pb-2">
+                    <h3 className="font-bold text-lg flex items-center gap-2">
+                        <Search className="text-purple-600" />
+                        Minority Stress Test
+                    </h3>
+                    <span className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-500">Dataset: Rare Profiles Only</span>
+                </div>
+                
+                <p className="text-sm text-gray-600 mb-4">
+                    We tested your model specifically on <span className="font-bold text-purple-600">Purple Drills</span> (Skilled Minority) and <span className="font-bold text-orange-500">Orange Mops</span> (Unskilled Majority).
+                </p>
+
+                <div className="grid grid-cols-2 gap-8">
+                    {/* Purple Drills (Should be HIRED) */}
+                    <div className="bg-purple-50 p-4 rounded-lg border border-purple-100">
+                        <h4 className="font-bold text-purple-800 mb-2 text-sm">Candidates: Purple Robots with Drills</h4>
+                        <div className="grid grid-cols-6 gap-2">
+                            {stressTestResults.filter(r => r.color === COLORS.GROUP_B).map(r => (
+                                <div key={r.id} className="relative group">
+                                    <Robot color={r.color} tool={r.tool} size="sm" mood={r.correct ? 'neutral' : 'sad'} />
+                                    <div className="absolute -bottom-2 -right-2">
+                                        {r.correct ? <Check size={20} className="text-green-500 bg-white rounded-full shadow"/> : <X size={20} className="text-red-500 bg-white rounded-full shadow"/>}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <p className="text-xs mt-3 text-purple-700">
+                            {stressTestResults.filter(r => r.color === COLORS.GROUP_B && !r.correct).length > 2 
+                             ? "⚠️ Model is rejecting skilled candidates because of their color!" 
+                             : "✅ Skilled candidates hired correctly."}
+                        </p>
+                    </div>
+
+                    {/* Orange Mops (Should be REJECTED) */}
+                    <div className="bg-orange-50 p-4 rounded-lg border border-orange-100">
+                        <h4 className="font-bold text-orange-800 mb-2 text-sm">Candidates: Orange Robots with Mops</h4>
+                        <div className="grid grid-cols-6 gap-2">
+                            {stressTestResults.filter(r => r.color === COLORS.GROUP_A).map(r => (
+                                <div key={r.id} className="relative group">
+                                    <Robot color={r.color} tool={r.tool} size="sm" />
+                                    <div className="absolute -bottom-2 -right-2">
+                                        {r.correct ? <Check size={20} className="text-green-500 bg-white rounded-full shadow"/> : <X size={20} className="text-red-500 bg-white rounded-full shadow"/>}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <p className="text-xs mt-3 text-orange-700">
+                            {stressTestResults.filter(r => r.color === COLORS.GROUP_A && !r.correct).length > 2 
+                             ? "⚠️ Model is hiring unskilled candidates because of their color!" 
+                             : "✅ Unskilled candidates rejected correctly."}
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            {/* Model Insight Visualization */}
+            <div className="bg-white p-6 rounded-xl shadow-sm mb-8">
+              <h3 className="font-bold text-lg mb-4 border-b pb-2">Why did this happen? (Model Logic)</h3>
+              <div className="flex items-center gap-8">
+                <div className="flex-1">
+                  <div className="flex justify-between mb-1">
+                    <span className="font-semibold text-gray-700">Influence of COLOR</span>
+                    <span className="text-gray-500">{Math.round(modelWeights.colorWeight * 100)}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-4">
+                    <div 
+                      className={`h-4 rounded-full ${modelWeights.colorWeight > 0.4 ? 'bg-red-500' : 'bg-blue-400'}`} 
+                      style={{ width: `${modelWeights.colorWeight * 100}%` }}
+                    ></div>
+                  </div>
+                  {modelWeights.colorWeight > 0.4 && (
+                    <p className="text-red-500 text-sm mt-1 flex items-center gap-1">
+                      <AlertTriangle size={14}/> Risk: Model thinks Color determines Skill!
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex-1">
+                  <div className="flex justify-between mb-1">
+                    <span className="font-semibold text-gray-700">Influence of TOOL</span>
+                    <span className="text-gray-500">{Math.round(modelWeights.toolWeight * 100)}%</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-4">
+                    <div 
+                      className="h-4 rounded-full bg-green-500" 
+                      style={{ width: `${modelWeights.toolWeight * 100}%` }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-center gap-4 pb-8">
+              {!passed && (
+                <button 
+                  onClick={() => {
+                    setPhase(GAME_PHASES.COLLECT);
+                    handleStartRound(true); // Enable augmentation
+                  }}
+                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-lg flex items-center gap-2 transform transition hover:scale-105"
+                >
+                  <Users size={20} /> Fix Bias (Add Minority Data)
+                </button>
+              )}
+              
+              <button 
+                onClick={() => {
+                  setPhase(GAME_PHASES.INTRO);
+                  setDataset([]);
+                  setQueue([]);
+                  setScore({ accuracy: 0, fairness: 0 });
+                }}
+                className="px-6 py-3 bg-white border-2 border-gray-300 hover:bg-gray-50 text-gray-700 font-bold rounded-lg flex items-center gap-2"
+              >
+                <RotateCcw size={20} /> Reset Game
+              </button>
+            </div>
+
+          </div>
+        );
+
+      default:
+        return <div>Error</div>;
+    }
+  };
+
+  return (
+    <div className="w-full h-screen bg-gray-100 flex flex-col font-sans text-gray-900 overflow-hidden">
+      {/* Header */}
+      <header className="bg-white border-b border-gray-200 px-6 py-3 flex justify-between items-center shadow-sm z-10">
+        <div className="flex items-center gap-2">
+          <div className="bg-blue-600 p-2 rounded text-white">
+            <Brain size={20} />
+          </div>
+          <h1 className="font-bold text-lg">Bias Busters <span className="text-gray-400 font-normal">| Dev Mode</span></h1>
+        </div>
+        
+        {phase !== GAME_PHASES.INTRO && (
+          <div className="flex gap-6 text-sm">
+            <div className="flex items-center gap-2 text-gray-600">
+              <span className="w-3 h-3 rounded-full bg-orange-500"></span> Orange: {stats.orange}
+            </div>
+            <div className="flex items-center gap-2 text-gray-600">
+              <span className="w-3 h-3 rounded-full bg-purple-500"></span> Purple: {stats.purple}
+            </div>
+            <div className="h-4 w-px bg-gray-300"></div>
+             <div className="flex items-center gap-1 font-semibold text-green-700">
+              Drills: {stats.drills}
+            </div>
+            <div className="flex items-center gap-1 font-semibold text-red-700">
+              Mops: {stats.mops}
+            </div>
+          </div>
+        )}
+      </header>
+
+      {/* Main Game Area */}
+      <main className="flex-1 overflow-hidden relative">
+        <div className="absolute inset-0 max-w-5xl mx-auto p-6">
+          {renderPhaseContent()}
+        </div>
+      </main>
+
+      {/* Feedback Toast */}
+      {feedback && (
+        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-full shadow-xl animate-bounce-in z-50 flex items-center gap-3">
+          <Info size={18} className="text-blue-400" />
+          {feedback}
+          <button onClick={() => setFeedback("")} className="ml-2 hover:text-gray-300"><X size={14}/></button>
+        </div>
+      )}
+      
+      <style>{`
+        @keyframes conveyor {
+            from { background-position: 0 0; }
+            to { background-position: -40px 0; }
+        }
+        @keyframes scan {
+            0% { top: 0; opacity: 0; }
+            20% { opacity: 1; }
+            80% { opacity: 1; }
+            100% { top: 100%; opacity: 0; }
+        }
+        @keyframes stamp {
+            0% { transform: translate(-50%, -50%) scale(2) rotate(-12deg); opacity: 0; }
+            100% { transform: translate(-50%, -50%) scale(1) rotate(-12deg); opacity: 1; }
+        }
+        .animate-conveyor {
+            animation: conveyor 1s linear infinite;
+        }
+        .animate-scan {
+            animation: scan 1.5s linear infinite;
+        }
+        .animate-stamp {
+            animation: stamp 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+      `}</style>
+    </div>
+  );
+}
