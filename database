@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S.4 ICT Database Master</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Fira+Code:wght@400;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .code-font { font-family: 'Fira Code', monospace; }
+        /* Custom scrollbar for better visibility */
+        ::-webkit-scrollbar { width: 10px; height: 10px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 5px; border: 2px solid #f1f5f9; }
+        ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+        .animate-fade-in { animation: fadeIn 0.3s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useCallback, useMemo } = React;
+
+        // --- CONSTANTS & DATA SCHEMAS ---
+
+        // Added JOIN_DATE to support Date function demos
+        const SIM_PLAYERS_DATA = [
+            { ID: 'P001', NICKNAME: 'DragonSlayer', LEVEL: 50, COINS: 104198, VIP: 'TRUE', JOIN_DATE: '2023-01-15' },
+            { ID: 'P002', NICKNAME: 'KanKan', LEVEL: 88, COINS: 900410, VIP: 'TRUE', JOIN_DATE: '2022-11-20' },
+            { ID: 'P003', NICKNAME: 'NoobMaster', LEVEL: 34, COINS: 32178, VIP: 'FALSE', JOIN_DATE: '2023-05-10' },
+            { ID: 'P004', NICKNAME: 'ProGamer', LEVEL: 2, COINS: 2736, VIP: 'FALSE', JOIN_DATE: '2024-02-01' },
+            { ID: 'P005', NICKNAME: 'SpeedRun', LEVEL: 99, COINS: 5000, VIP: 'TRUE', JOIN_DATE: '2021-08-30' },
+            { ID: 'P006', NICKNAME: 'Alex', LEVEL: 50, COINS: 1200, VIP: 'FALSE', JOIN_DATE: '2023-12-25' },
+            { ID: 'P007', NICKNAME: 'Beta', LEVEL: 88, COINS: 500, VIP: 'TRUE', JOIN_DATE: '2023-01-15' }
+        ];
+
+        // --- ROBUST SQL ENGINE (Updated for Functions) ---
+        const executeSQL = (query, data) => {
+            try {
+                // 1. Clean and normalize
+                let q = query.trim().replace(/;/g, '').replace(/\s+/g, ' ');
+                
+                const parts = {
+                    select: "", from: "", where: null, groupBy: null, having: null, orderBy: null
+                };
+
+                // Split by keywords
+                let current = q;
+                const orderSplit = current.split(/\s+ORDER\s+BY\s+/i);
+                if (orderSplit.length > 1) { parts.orderBy = orderSplit[1].trim(); current = orderSplit[0]; }
+                const havingSplit = current.split(/\s+HAVING\s+/i);
+                if (havingSplit.length > 1) { parts.having = havingSplit[1].trim(); current = havingSplit[0]; }
+                const groupSplit = current.split(/\s+GROUP\s+BY\s+/i);
+                if (groupSplit.length > 1) { parts.groupBy = groupSplit[1].trim(); current = groupSplit[0]; }
+                const whereSplit = current.split(/\s+WHERE\s+/i);
+                if (whereSplit.length > 1) { parts.where = whereSplit[1].trim(); current = whereSplit[0]; }
+                const fromSplit = current.split(/\s+FROM\s+/i);
+                if (fromSplit.length > 1) { parts.from = fromSplit[1].trim(); parts.select = fromSplit[0].replace(/^SELECT\s+/i, '').trim(); } 
+                else { return { error: "Syntax Error: Missing FROM clause" }; }
+
+                if (parts.from.toUpperCase() !== 'PLAYERS') return { error: `Table '${parts.from}' not found. Try 'PLAYERS'.` };
+
+                // 2. Helper to evaluate expressions (LEN, MID, etc.)
+                const evaluateExpression = (expr, row) => {
+                    expr = expr.trim();
+                    
+                    // Regex for Functions
+                    const funcMatch = expr.match(/^(\w+)\((.+)\)$/);
+                    if (funcMatch) {
+                        const [_, funcName, argsStr] = funcMatch;
+                        const args = argsStr.split(',').map(a => a.trim());
+                        const colVal = row[args[0]] !== undefined ? row[args[0]] : args[0].replace(/'/g, ''); // Value from row or literal
+                        
+                        const fn = funcName.toUpperCase();
+                        if (fn === 'LEN' || fn === 'LENGTH') return String(colVal).length;
+                        if (fn === 'UCASE' || fn === 'UPPER') return String(colVal).toUpperCase();
+                        if (fn === 'LCASE' || fn === 'LOWER') return String(colVal).toLowerCase();
+                        if (fn === 'MID') {
+                            const start = parseInt(args[1]) - 1; // SQL is 1-based, JS is 0-based
+                            const len = parseInt(args[2]);
+                            return String(colVal).substr(start, len);
+                        }
+                        if (fn === 'YEAR') return new Date(colVal).getFullYear();
+                        if (fn === 'MONTH') return new Date(colVal).getMonth() + 1;
+                        if (fn === 'DAY') return new Date(colVal).getDate();
+                        if (fn === 'ROUND') return Math.round(Number(colVal));
+                        
+                        // Aggregates are handled in step 5, just return raw value here for processing
+                        return Number(colVal) || 0; 
+                    }
+                    
+                    // Regular column or literal
+                    if (row[expr] !== undefined) return row[expr];
+                    if (!isNaN(expr)) return Number(expr);
+                    return expr.replace(/'/g, '');
+                };
+
+                // 3. Execute: FILTER (WHERE)
+                let filtered = [...data];
+                if (parts.where) {
+                    const conditions = parts.where.split(/\s+AND\s+/i);
+                    filtered = filtered.filter(row => {
+                        return conditions.every(cond => {
+                            const match = cond.match(/(\w+)\s*(=|<>|>|<|>=|<=|LIKE|IS)\s*(.+)/i);
+                            if (!match) return true;
+                            let [__, col, op, valRaw] = match;
+                            let val = valRaw.replace(/'/g, "").trim();
+                            const rVal = row[col];
+
+                            if (op.toUpperCase() === 'LIKE') return String(rVal).toUpperCase().includes(val.replace(/%/g, '').toUpperCase());
+                            if (op.toUpperCase() === 'IS') { // Handle IS NULL
+                                if (val.toUpperCase() === 'NULL') return rVal === null || rVal === undefined || rVal === '';
+                                if (val.toUpperCase() === 'NOT NULL') return rVal !== null && rVal !== undefined && rVal !== '';
+                            }
+                            
+                            const isNum = !isNaN(rVal) && !isNaN(val) && val !== '';
+                            const a = isNum ? Number(rVal) : rVal;
+                            const b = isNum ? Number(val) : val;
+
+                            switch(op) {
+                                case '=': return String(a) === String(b);
+                                case '>': return a > b;
+                                case '<': return a < b;
+                                case '>=': return a >= b;
+                                case '<=': return a <= b;
+                                case '<>': return String(a) !== String(b);
+                                default: return false;
+                            }
+                        });
+                    });
+                }
+
+                // 4. Execute: GROUP BY
+                let grouped = [];
+                if (parts.groupBy) {
+                    const groupCol = parts.groupBy.trim();
+                    const groups = {};
+                    filtered.forEach(row => {
+                        const key = row[groupCol];
+                        if (!groups[key]) groups[key] = [];
+                        groups[key].push(row);
+                    });
+                    Object.keys(groups).forEach(key => {
+                        grouped.push({ _groupKey: key, _rows: groups[key], [groupCol]: key });
+                    });
+                } else {
+                    grouped = filtered.map(row => ({ ...row, _rows: [row] }));
+                }
+
+                // 5. Execute: SELECT (Columns, Aggregates & Functions)
+                const fields = parts.select.split(',').map(f => f.trim());
+                
+                // Collapse for global aggregates if no group by
+                const isGlobalAgg = !parts.groupBy && fields.some(f => f.match(/(COUNT|MAX|MIN|SUM|AVG)\(/i));
+                if (isGlobalAgg) grouped = [{ _rows: filtered }];
+
+                let result = grouped.map(row => {
+                    let newRow = {};
+                    fields.forEach(f => {
+                        // Check Aggregates
+                        const agg = f.match(/(COUNT|MAX|MIN|SUM|AVG)\((.+)\)/i);
+                        if (agg) {
+                            const [___, func, col] = agg;
+                            const rows = row._rows;
+                            const values = rows.map(r => Number(r[col.trim() === '*' ? 'ID' : col.trim()]) || 0);
+                            
+                            let res = 0;
+                            if (func.toUpperCase() === 'COUNT') res = rows.length;
+                            else if (rows.length === 0) res = 0;
+                            else if (func.toUpperCase() === 'MAX') res = Math.max(...values);
+                            else if (func.toUpperCase() === 'MIN') res = Math.min(...values);
+                            else if (func.toUpperCase() === 'SUM') res = values.reduce((a,b)=>a+b,0);
+                            else if (func.toUpperCase() === 'AVG') res = (values.reduce((a,b)=>a+b,0) / rows.length);
+                            
+                            newRow[f] = Number.isInteger(res) ? res : res.toFixed(1);
+                        } else {
+                            // Handle * or Functions or Columns
+                            if (f === '*') {
+                                const sourceRow = row._rows[0] || {};
+                                Object.keys(sourceRow).forEach(k => { if(k!=='_rows') newRow[k] = sourceRow[k]; });
+                            } else {
+                                // Use evaluateExpression to handle LEN(), YEAR(), etc.
+                                // We use the first row of the group for scalar values
+                                newRow[f] = evaluateExpression(f, row._rows[0] || {});
+                            }
+                        }
+                    });
+                    return newRow;
+                });
+
+                // 6. Execute: HAVING
+                if (parts.having && parts.groupBy) {
+                     const match = parts.having.match(/(COUNT|MAX|MIN|SUM|AVG)\((.+)\)\s*(=|>|<|>=|<=)\s*(.+)/i);
+                     if (match) {
+                        const [fullFunc, func, col, op, val] = match;
+                        result = result.filter(row => {
+                            const valToCheck = row[fullFunc.trim()]; 
+                            if (valToCheck === undefined) return true; 
+                            const nVal = Number(valToCheck);
+                            const nLimit = Number(val);
+                            if (op === '>') return nVal > nLimit;
+                            if (op === '<') return nVal < nLimit;
+                            if (op === '=') return nVal == nLimit;
+                            return true;
+                        });
+                     }
+                }
+
+                // 7. Execute: ORDER BY
+                if (parts.orderBy) {
+                    const [col, dir] = parts.orderBy.split(/\s+/);
+                    const isDesc = dir && dir.toUpperCase() === 'DESC';
+                    result.sort((a, b) => {
+                        const vA = isNaN(a[col]) ? a[col] : Number(a[col]);
+                        const vB = isNaN(b[col]) ? b[col] : Number(b[col]);
+                        if (vA < vB) return isDesc ? 1 : -1;
+                        if (vA > vB) return isDesc ? -1 : 1;
+                        return 0;
+                    });
+                }
+
+                return { type: 'table', value: result };
+
+            } catch (e) {
+                console.error(e);
+                return { error: "Execution Error: Check your syntax." };
+            }
+        };
+
+        // --- COMPONENTS ---
+
+        const NavButton = ({ active, onClick, icon, label }) => (
+            <button 
+                onClick={onClick}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-all text-sm md:text-base ${
+                    active 
+                    ? 'bg-blue-600 text-white shadow-md' 
+                    : 'bg-white text-slate-600 hover:bg-slate-100'
+                }`}
+            >
+                {icon}
+                <span>{label}</span>
+            </button>
+        );
+
+        const Card = ({ title, children, className = "" }) => (
+            <div className={`bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden ${className}`}>
+                {title && <div className="px-6 py-3 border-b border-slate-100 font-bold text-lg bg-slate-50 text-slate-700">{title}</div>}
+                <div className="p-6">{children}</div>
+            </div>
+        );
+
+        const TableView = ({ data, highlight }) => {
+            if (!data || data.length === 0) return <div className="text-slate-400 italic p-4">No data</div>;
+            const cols = Object.keys(data[0]).filter(k => !k.startsWith('_'));
+            return (
+                <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                    <table className="w-full text-left text-sm whitespace-nowrap">
+                        <thead className="bg-slate-100 text-slate-600">
+                            <tr>
+                                {cols.map(c => <th key={c} className="px-4 py-2 font-bold border-b">{c}</th>)}
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100 bg-white code-font text-slate-700">
+                            {data.map((row, i) => (
+                                <tr key={i} className={`hover:bg-slate-50 ${highlight ? 'animate-fade-in' : ''}`}>
+                                    {cols.map(c => <td key={c} className="px-4 py-2">{row[c]}</td>)}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        };
+
+        // --- STUDY NOTES CONTENT ---
+        const StudyNotes = () => {
+            const [tab, setTab] = useState('CLAUSES'); 
+
+            return (
+                <div className="max-w-5xl mx-auto space-y-6">
+                    <div className="flex gap-2 overflow-x-auto pb-2">
+                        {['SQL Reference', 'DDL & DML', 'Functions'].map((t, i) => {
+                            const key = ['CLAUSES', 'DDL', 'FUNCS'][i];
+                            return (
+                                <button 
+                                    key={key}
+                                    onClick={() => setTab(key)}
+                                    className={`px-4 py-2 rounded-lg font-bold whitespace-nowrap ${tab === key ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border'}`}
+                                >
+                                    {t}
+                                </button>
+                            )
+                        })}
+                    </div>
+
+                    {tab === 'CLAUSES' && (
+                        <div className="space-y-6">
+                            <Card title="Core SQL Clauses & Operators">
+                                <div className="space-y-4 text-sm text-slate-700">
+                                    <div className="grid md:grid-cols-4 gap-4 bg-slate-50 p-3 rounded">
+                                        <div className="font-bold text-blue-700">SELECT</div>
+                                        <div className="md:col-span-3">Specifies the fields (columns) to retrieve. Use <code>*</code> for all columns.</div>
+                                        
+                                        <div className="font-bold text-blue-700">FROM</div>
+                                        <div className="md:col-span-3">Specifies the table to access.</div>
+                                        
+                                        <div className="font-bold text-blue-700">WHERE</div>
+                                        <div className="md:col-span-3">Filters <strong>rows</strong> based on conditions.</div>
+                                        
+                                        <div className="font-bold text-blue-700">ORDER BY</div>
+                                        <div className="md:col-span-3">Sorts results. <code className="bg-white px-1">ASC</code> (Ascending, default) or <code className="bg-white px-1">DESC</code> (Descending).</div>
+                                        
+                                        <div className="font-bold text-blue-700">GROUP BY</div>
+                                        <div className="md:col-span-3">Groups rows that have the same values into summary rows (used with COUNT, MAX, etc).</div>
+                                        
+                                        <div className="font-bold text-blue-700">HAVING</div>
+                                        <div className="md:col-span-3">Filters <strong>groups</strong> after grouping (unlike WHERE which filters rows before).</div>
+                                    </div>
+                                    
+                                    <h4 className="font-bold text-slate-800 mt-4 border-b pb-1">Comparison & Logic</h4>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <ul className="list-disc pl-5 space-y-1">
+                                            <li><code>=</code>, <code>&lt;&gt;</code> (Not Equal)</li>
+                                            <li><code>&gt;</code>, <code>&lt;</code>, <code>&gt;=</code>, <code>&lt;=</code></li>
+                                            <li><code>BETWEEN a AND b</code> (Range)</li>
+                                            <li><code>LIKE 'A%'</code> (Pattern: Starts with A)</li>
+                                        </ul>
+                                        <ul className="list-disc pl-5 space-y-1">
+                                            <li><code>AND</code> (Both true)</li>
+                                            <li><code>OR</code> (At least one true)</li>
+                                            <li><code>NOT</code> (Inverse)</li>
+                                            <li><code>IS NULL</code> (Check for empty)</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </Card>
+                        </div>
+                    )}
+
+                    {tab === 'DDL' && (
+                        <div className="grid md:grid-cols-2 gap-6">
+                            <Card title="Data Definition (Structure)">
+                                <div className="space-y-3 text-sm">
+                                    <div>
+                                        <strong className="text-purple-700">CREATE TABLE</strong>
+                                        <p className="text-xs text-slate-500 mb-1">Make new table</p>
+                                        <code className="bg-slate-100 p-1 block">CREATE TABLE STU (ID CHAR(5) PRIMARY KEY, NAME VARCHAR(20));</code>
+                                    </div>
+                                    <div>
+                                        <strong className="text-purple-700">ALTER TABLE</strong>
+                                        <p className="text-xs text-slate-500 mb-1">Change structure</p>
+                                        <code className="bg-slate-100 p-1 block mb-1">ALTER TABLE STU ADD EMAIL VARCHAR(50);</code>
+                                        <code className="bg-slate-100 p-1 block">ALTER TABLE STU DROP COLUMN DOB;</code>
+                                    </div>
+                                    <div>
+                                        <strong className="text-purple-700">DROP TABLE</strong>
+                                        <p className="text-xs text-slate-500">Deletes entire table.</p>
+                                    </div>
+                                </div>
+                            </Card>
+                            <Card title="Data Manipulation (Data)">
+                                <div className="space-y-3 text-sm">
+                                    <div>
+                                        <strong className="text-green-700">INSERT INTO</strong>
+                                        <p className="text-xs text-slate-500 mb-1">Add record</p>
+                                        <code className="bg-slate-100 p-1 block">INSERT INTO STU (ID, NAME) VALUES ('1', 'Tom');</code>
+                                    </div>
+                                    <div>
+                                        <strong className="text-green-700">UPDATE</strong>
+                                        <p className="text-xs text-slate-500 mb-1">Edit record</p>
+                                        <code className="bg-slate-100 p-1 block">UPDATE STU SET CLASS='1A' WHERE ID='1';</code>
+                                    </div>
+                                    <div>
+                                        <strong className="text-green-700">DELETE FROM</strong>
+                                        <p className="text-xs text-slate-500 mb-1">Remove record</p>
+                                        <code className="bg-slate-100 p-1 block">DELETE FROM STU WHERE ID='1';</code>
+                                    </div>
+                                </div>
+                            </Card>
+                        </div>
+                    )}
+
+                    {tab === 'FUNCS' && (
+                        <div className="space-y-6">
+                             <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200 text-sm mb-4">
+                                <strong>💡 Note:</strong> You can try these functions in the <b>Visualizer</b> tab!
+                            </div>
+
+                            <Card title="1. Text Functions">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-slate-100 text-left">
+                                        <tr><th className="p-3">Function</th><th className="p-3">Description</th><th className="p-3">Example</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        <tr>
+                                            <td className="p-3 code-font font-bold">LEN(str) / LENGTH()</td>
+                                            <td className="p-3">Returns the number of characters.</td>
+                                            <td className="p-3 bg-slate-50 font-mono">LEN('Apple') = 5</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="p-3 code-font font-bold">MID(str, start, len)</td>
+                                            <td className="p-3">Extracts characters from middle.</td>
+                                            <td className="p-3 bg-slate-50 font-mono">MID('Cloud', 2, 3) = 'lou'</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="p-3 code-font font-bold">UCASE() / UPPER()</td>
+                                            <td className="p-3">Converts to Uppercase.</td>
+                                            <td className="p-3 bg-slate-50 font-mono">UCASE('Hi') = 'HI'</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="p-3 code-font font-bold">TRIM(str)</td>
+                                            <td className="p-3">Removes leading/trailing spaces.</td>
+                                            <td className="p-3 bg-slate-50 font-mono">TRIM(' a ') = 'a'</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </Card>
+
+                            <Card title="2. Date Functions">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-slate-100 text-left">
+                                        <tr><th className="p-3">Function</th><th className="p-3">Description</th><th className="p-3">Example (2023-12-25)</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        <tr>
+                                            <td className="p-3 code-font font-bold">YEAR(date)</td>
+                                            <td className="p-3">Extracts the year part.</td>
+                                            <td className="p-3 bg-slate-50 font-mono">2023</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="p-3 code-font font-bold">MONTH(date)</td>
+                                            <td className="p-3">Extracts the month (1-12).</td>
+                                            <td className="p-3 bg-slate-50 font-mono">12</td>
+                                        </tr>
+                                        <tr>
+                                            <td className="p-3 code-font font-bold">DAY(date)</td>
+                                            <td className="p-3">Extracts the day of month.</td>
+                                            <td className="p-3 bg-slate-50 font-mono">25</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </Card>
+
+                             <Card title="3. Aggregate Functions">
+                                <table className="w-full text-sm">
+                                    <thead className="bg-slate-100 text-left">
+                                        <tr><th className="p-3">Function</th><th className="p-3">Description</th></tr>
+                                    </thead>
+                                    <tbody className="divide-y">
+                                        <tr><td className="p-3 code-font font-bold">COUNT(*)</td><td className="p-3">Counts number of rows.</td></tr>
+                                        <tr><td className="p-3 code-font font-bold">SUM(field)</td><td className="p-3">Calculates total sum of a numeric field.</td></tr>
+                                        <tr><td className="p-3 code-font font-bold">AVG(field)</td><td className="p-3">Calculates average value.</td></tr>
+                                        <tr><td className="p-3 code-font font-bold">MAX(field)</td><td className="p-3">Finds the highest value.</td></tr>
+                                        <tr><td className="p-3 code-font font-bold">MIN(field)</td><td className="p-3">Finds the lowest value.</td></tr>
+                                    </tbody>
+                                </table>
+                            </Card>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // --- SIMULATOR / VISUALIZER ---
+
+        const Simulator = () => {
+            const [query, setQuery] = useState('');
+            const [explanation, setExplanation] = useState(null);
+            const [result, setResult] = useState(null);
+            const [showSource, setShowSource] = useState(false); // Default hidden to save space
+
+            const demos = [
+                {
+                    group: "Basic Filtering",
+                    items: [
+                        { label: "Find VIP Players", sql: "SELECT * FROM PLAYERS WHERE VIP = 'TRUE'", desc: "Filters rows where VIP column is 'TRUE'." },
+                        { label: "High Level & Rich", sql: "SELECT NICKNAME, LEVEL, COINS FROM PLAYERS WHERE LEVEL > 40 AND COINS > 1000", desc: "Uses AND logic. Both conditions must be met." }
+                    ]
+                },
+                {
+                    group: "Functions & Ordering",
+                    items: [
+                        { label: "Sort by Coins (DESC)", sql: "SELECT NICKNAME, COINS FROM PLAYERS ORDER BY COINS DESC", desc: "Shows richest players first (Descending order)." },
+                        { label: "Name Length (LEN)", sql: "SELECT NICKNAME, LEN(NICKNAME) FROM PLAYERS", desc: "Calculates the number of characters in each Nickname." },
+                        { label: "Extract Text (MID)", sql: "SELECT ID, MID(ID, 2, 3) FROM PLAYERS", desc: "Extracts 3 characters starting from position 2 of ID." },
+                        { label: "Uppercase (UCASE)", sql: "SELECT UCASE(NICKNAME) FROM PLAYERS", desc: "Converts Nicknames to ALL CAPS." },
+                        { label: "Join Year (YEAR)", sql: "SELECT NICKNAME, YEAR(JOIN_DATE) FROM PLAYERS", desc: "Extracts only the Year from the JOIN_DATE." }
+                    ]
+                },
+                {
+                    group: "Grouping & Aggregates",
+                    items: [
+                        { label: "Count Players by Level", sql: "SELECT LEVEL, COUNT(*) FROM PLAYERS GROUP BY LEVEL", desc: "Groups identical Levels and counts players in each." },
+                        { label: "Avg Coins by VIP", sql: "SELECT VIP, AVG(COINS) FROM PLAYERS GROUP BY VIP", desc: "Calculates average coins for VIPs vs Non-VIPs." },
+                        { label: "Filter Groups (HAVING)", sql: "SELECT LEVEL, COUNT(*) FROM PLAYERS GROUP BY LEVEL HAVING COUNT(*) > 1", desc: "Removes groups with only 1 player." }
+                    ]
+                }
+            ];
+
+            const runQuery = (sql, desc) => {
+                setQuery(sql);
+                setExplanation(desc);
+                const res = executeSQL(sql, SIM_PLAYERS_DATA);
+                setResult(res);
+            };
+
+            return (
+                <div className="grid lg:grid-cols-12 gap-6 h-full">
+                    {/* LEFT: DEMO SELECTOR - STICKY so it stays while you scroll result */}
+                    <div className="lg:col-span-3 space-y-4 lg:sticky lg:top-24 h-fit max-h-[calc(100vh-140px)] overflow-y-auto pr-2">
+                        {demos.map((group, i) => (
+                            <div key={i} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                                <div className="bg-slate-100 px-4 py-2 font-bold text-slate-600 text-sm uppercase">{group.group}</div>
+                                <div className="divide-y divide-slate-100">
+                                    {group.items.map((item, j) => (
+                                        <button 
+                                            key={j} 
+                                            onClick={() => runQuery(item.sql, item.desc)}
+                                            className="w-full text-left p-3 hover:bg-blue-50 transition-colors group"
+                                        >
+                                            <div className="font-bold text-slate-700 text-sm group-hover:text-blue-700">{item.label}</div>
+                                            <div className="text-xs text-slate-400 font-mono mt-1 truncate">{item.sql}</div>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+
+                    {/* RIGHT: VISUALIZER - Allow natural scrolling (Removed fixed height/overflow) */}
+                    <div className="lg:col-span-9 flex flex-col gap-4 pb-10">
+                        
+                        {/* Source Data - Toggable */}
+                        <div className="bg-white rounded-xl border border-blue-200 overflow-hidden shrink-0">
+                            <div 
+                                onClick={() => setShowSource(!showSource)}
+                                className="bg-blue-50 px-4 py-2 text-xs font-bold text-blue-800 flex justify-between items-center cursor-pointer hover:bg-blue-100"
+                            >
+                                <span>SOURCE TABLE: PLAYERS {showSource ? '(Click to Hide)' : '(Click to Show)'}</span>
+                                <span>{SIM_PLAYERS_DATA.length} Records</span>
+                            </div>
+                            
+                            {showSource && (
+                                <div className="w-full max-h-60 overflow-auto border-t border-blue-100 animate-fade-in">
+                                    <TableView data={SIM_PLAYERS_DATA} />
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Executing Box */}
+                        <div className="bg-slate-900 rounded-xl p-4 shadow text-white flex flex-col gap-2 shrink-0">
+                            <div className="text-xs font-bold text-slate-500 uppercase">Current Query</div>
+                            <div className="font-mono text-green-400 text-sm break-all">{query || "// Select a demo from the left..."}</div>
+                            {explanation && <div className="text-slate-300 text-xs italic border-t border-slate-700 pt-2 mt-1">{explanation}</div>}
+                        </div>
+
+                        {/* Result Output - Full Height, No Internal Scroll */}
+                        <Card title="Query Result" className="min-h-[200px]">
+                             <div className="overflow-x-auto"> {/* Only horizontal scroll if needed */}
+                                {result?.error ? (
+                                    <div className="p-4 bg-red-50 text-red-600 rounded font-bold text-sm">{result.error}</div>
+                                ) : result?.value ? (
+                                    <TableView data={result.value} highlight={true} />
+                                ) : (
+                                    <div className="py-12 flex items-center justify-center text-slate-300 italic text-sm">
+                                        Results will appear here
+                                    </div>
+                                )}
+                            </div>
+                        </Card>
+                    </div>
+                </div>
+            );
+        };
+
+        // --- QUIZ (Updated) ---
+
+        const Quiz = () => {
+            const [gameState, setGameState] = useState('START'); 
+            const [currentSet, setCurrentSet] = useState(0); 
+            const [score, setScore] = useState(0);
+            const [currentQ, setCurrentQ] = useState(null);
+            const [feedback, setFeedback] = useState(null); 
+
+            // Procedural Question Generator
+            const generateQuestion = () => {
+                const names = ['Alex', 'Ben', 'Cat', 'Dan', 'Eva', 'Fay', 'Gus', 'Hal'];
+                const rows = Array.from({ length: 5 }, (_, i) => ({
+                    ID: `P00${i+1}`,
+                    NICKNAME: names[Math.floor(Math.random() * names.length)],
+                    LEVEL: Math.floor(Math.random() * 90) + 10,
+                    COINS: Math.floor(Math.random() * 5000) + 100,
+                    VIP: Math.random() > 0.5 ? 'TRUE' : 'FALSE'
+                }));
+
+                // Types: MAX, COUNT, FILTER
+                const types = ['MAX', 'COUNT', 'FILTER', 'LEN'];
+                const type = types[Math.floor(Math.random() * types.length)];
+                
+                let sql = '', ans = '', opts = [];
+
+                if (type === 'MAX') {
+                    const col = Math.random() > 0.5 ? 'LEVEL' : 'COINS';
+                    sql = `SELECT MAX(${col}) FROM PLAYERS`;
+                    const vals = rows.map(r => r[col]);
+                    ans = Math.max(...vals);
+                    opts = [ans, ans + 10, ans - 5, Math.min(...vals)];
+                } else if (type === 'COUNT') {
+                    sql = `SELECT COUNT(*) FROM PLAYERS WHERE VIP = 'TRUE'`;
+                    ans = rows.filter(r => r.VIP === 'TRUE').length;
+                    opts = [ans, ans + 1, ans - 1, 5];
+                } else if (type === 'LEN') {
+                    const target = rows[0];
+                    sql = `SELECT LEN(NICKNAME) FROM PLAYERS WHERE ID='${target.ID}'`;
+                    ans = target.NICKNAME.length;
+                    opts = [ans, ans+1, ans-1, 10];
+                } else {
+                    const target = rows[2];
+                    sql = `SELECT COINS FROM PLAYERS WHERE ID = '${target.ID}'`;
+                    ans = target.COINS;
+                    opts = [ans, ans + 100, rows[0].COINS, rows[1].COINS];
+                }
+
+                // Shuffle options
+                const uniqueOpts = [...new Set(opts)];
+                while(uniqueOpts.length < 4) uniqueOpts.push(Math.floor(Math.random()*100));
+                
+                return {
+                    tableData: rows,
+                    sql: sql,
+                    answer: ans,
+                    options: uniqueOpts.sort(() => Math.random() - 0.5)
+                };
+            };
+
+            const startSet = () => {
+                setScore(0);
+                setCurrentSet(0);
+                setGameState('PLAYING');
+                nextQuestion();
+            };
+
+            const nextQuestion = () => {
+                setFeedback(null);
+                setCurrentQ(generateQuestion());
+            };
+
+            const handleAnswer = (opt) => {
+                if (feedback) return;
+                const correct = String(opt) === String(currentQ.answer);
+                setFeedback(correct ? 'CORRECT' : 'WRONG');
+                if (correct) setScore(s => s + 1);
+                
+                setTimeout(() => {
+                    if (currentSet >= 9) setGameState('END');
+                    else {
+                        setCurrentSet(c => c + 1);
+                        nextQuestion();
+                    }
+                }, 1000);
+            };
+
+            if (gameState === 'START') return (
+                <div className="flex flex-col items-center justify-center h-[calc(100vh-100px)]">
+                    <div className="text-6xl mb-6">📝</div>
+                    <h2 className="text-2xl font-bold mb-4">Infinite SQL Quiz</h2>
+                    <p className="text-slate-600 mb-8">10 Random Questions per set.</p>
+                    <button onClick={startSet} className="bg-blue-600 text-white px-8 py-3 rounded-full font-bold shadow hover:bg-blue-700">Start Quiz</button>
+                </div>
+            );
+
+            if (gameState === 'END') return (
+                <div className="flex flex-col items-center justify-center h-[calc(100vh-100px)]">
+                    <h2 className="text-3xl font-bold mb-2">Set Complete!</h2>
+                    <div className="text-5xl font-black text-blue-600 mb-4">{score} / 10</div>
+                    <button onClick={startSet} className="bg-blue-600 text-white px-6 py-2 rounded font-bold">Try Again</button>
+                </div>
+            );
+
+            return (
+                <div className="max-w-3xl mx-auto py-6">
+                    <div className="flex justify-between items-center mb-4">
+                        <span className="font-bold text-slate-400">Q{currentSet + 1}/10</span>
+                        <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded font-bold">Score: {score}</span>
+                    </div>
+                    <Card>
+                        <div className="mb-4">
+                            <p className="mb-2 font-bold text-slate-700">Given Table:</p>
+                            {/* Updated: No max-height, shows full table */}
+                            <div className="overflow-auto border rounded bg-slate-50">
+                                <TableView data={currentQ.tableData} />
+                            </div>
+                        </div>
+                        <div className="bg-slate-900 p-4 rounded mb-6 text-green-400 font-mono text-sm">
+                            {currentQ.sql}
+                        </div>
+                        <div className="grid grid-cols-2 gap-3">
+                            {currentQ.options.map((opt, i) => (
+                                <button key={i} onClick={() => handleAnswer(opt)} className={`p-3 border rounded font-bold ${feedback ? (String(opt) === String(currentQ.answer) ? 'bg-green-100 border-green-500' : 'opacity-50') : 'hover:bg-blue-50'}`}>
+                                    {opt}
+                                </button>
+                            ))}
+                        </div>
+                        {feedback && <div className={`mt-4 text-center font-bold ${feedback === 'CORRECT' ? 'text-green-600' : 'text-red-600'}`}>{feedback}!</div>}
+                    </Card>
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [view, setView] = useState('sim'); 
+
+            return (
+                <div className="min-h-screen flex flex-col bg-slate-50">
+                    <nav className="bg-white border-b sticky top-0 z-50 shadow-sm">
+                        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="w-8 h-8 bg-indigo-600 rounded-lg flex items-center justify-center text-white font-bold">DB</div>
+                                <h1 className="font-bold text-slate-800 hidden md:block">ICT Master</h1>
+                            </div>
+                            <div className="flex gap-2">
+                                <NavButton active={view === 'notes'} onClick={() => setView('notes')} icon="📚" label="Notes" />
+                                <NavButton active={view === 'sim'} onClick={() => setView('sim')} icon="👁️" label="Visualizer" />
+                                <NavButton active={view === 'quiz'} onClick={() => setView('quiz')} icon="📝" label="Quiz" />
+                            </div>
+                        </div>
+                    </nav>
+                    {/* Updated: Removed overflow-hidden from main to allow page scrolling */}
+                    <main className="flex-1 max-w-7xl mx-auto w-full p-4 md:p-6">
+                        {view === 'notes' && <StudyNotes />}
+                        {view === 'sim' && <Simulator />}
+                        {view === 'quiz' && <Quiz />}
+                    </main>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
